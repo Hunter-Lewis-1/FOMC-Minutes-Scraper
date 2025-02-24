@@ -1,0 +1,84 @@
+# Define Paths
+BASE_DIR = os.path.abspath(os.getcwd())
+HTM_DIR = os.path.join(BASE_DIR, "minutes_htm")
+CSV_FILE = os.path.join(BASE_DIR, "fomc_meeting_minutes.csv")
+FOMC_URL = "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
+
+def setup_directories():
+    """Ensure necessary directories exist and if not create path"""
+    os.makedirs(HTM_DIR, exist_ok=True)
+
+def fetch_fomc_minutes_links():
+    """Scrape the FOMC website and return a list of HTML minutes links."""
+    response = requests.get(FOMC_URL)
+    soup = BeautifulSoup(response.text, "html.parser")
+
+    links = []
+    for link in soup.find_all("a", href=True):
+        href = link["href"]
+        if "minutes" in href.lower() and href.endswith(".htm"):
+            full_link = f"https://www.federalreserve.gov{href}" if href.startswith("/") else href
+            links.append(full_link)
+
+    return links
+
+def extract_date_from_filename(filename):
+    """Extract meeting date from filename (e.g., 'minutes20240131.htm' -> '2024-01-31')."""
+    match = re.search(r"(\d{4})(\d{2})(\d{2})", filename)
+    if match:
+        return f"{match.group(1)}-{match.group(2)}-{match.group(3)}"
+    return "Unknown Date"
+
+def download_and_extract_text(url):
+    """Download an HTML file, extract text, and return structured data."""
+    filename = url.split("/")[-1]
+    html_path = os.path.join(HTM_DIR, filename)
+
+    # Skip if file already exists
+    if filename in os.listdir(HTM_DIR):
+        return None
+
+    response = requests.get(url)
+    with open(html_path, "w", encoding="utf-8") as file:
+        file.write(response.text)
+
+    # Extract content
+    soup = BeautifulSoup(response.text, "html.parser")
+    title = soup.title.text if soup.title else "Unknown Title"
+    paragraphs = soup.find_all("p")
+
+    # Clean and concatenate text
+    text_content = " ".join([p.get_text().strip() for p in paragraphs])
+    text_content = re.sub(r"\s+", " ", text_content)  # Remove extra whitespace
+
+    meeting_date = extract_date_from_filename(filename)
+
+    print(f"Downloaded and processed: {filename}")
+    return {"date": meeting_date, "meeting_title": title, "content": text_content}
+
+
+def update_csv(new_entries):
+    """Append new data to CSV if there are new entries."""
+    if new_entries:
+        df_new = pd.DataFrame(new_entries)
+
+        if os.path.exists(CSV_FILE):
+            df_new.to_csv(CSV_FILE, mode="a", header=False, index=False)
+        else:
+            df_new.to_csv(CSV_FILE, index=False)
+
+        print(f"Appended {len(new_entries)} new records to {CSV_FILE}")
+    else:
+        print("No new meeting minutes found.")
+
+def main():
+    """Main function to orchestrate the scraping and saving process."""
+    setup_directories()
+    minutes_links = fetch_fomc_minutes_links()
+    new_entries = [download_and_extract_text(url) for url in minutes_links]
+    new_entries = [entry for entry in new_entries if entry]  # Filter out None values
+    update_csv(new_entries)
+
+if __name__ == "__main__":
+    main()
+
